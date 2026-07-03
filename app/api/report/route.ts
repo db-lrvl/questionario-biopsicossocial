@@ -10,6 +10,18 @@ function csvCell(value: unknown) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function answerValueForCsv(value: unknown) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  return JSON.stringify(value);
+}
+
 function buildCsv(
   answers: Array<{
     submission_id: string;
@@ -25,7 +37,7 @@ function buildCsv(
       answer.submission_id,
       answer.section_key,
       answer.question_key,
-      JSON.stringify(answer.value ?? null),
+      answerValueForCsv(answer.value),
       answer.created_at,
     ]),
   ];

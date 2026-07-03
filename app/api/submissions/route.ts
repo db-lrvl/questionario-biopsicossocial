@@ -8,15 +8,24 @@ import { submissionRequestSchema, validateAnswers } from "@/lib/validation/submi
 
 export const dynamic = "force-dynamic";
 
+function logSupabaseError(operation: string, error: unknown) {
+  console.error(`[submissions] ${operation} failed`, error);
+}
+
 async function ensureQuestionnaireCatalog() {
   const supabase = createServiceClient();
 
-  await supabase.from("questionnaires").upsert({
+  const { error: questionnaireError } = await supabase.from("questionnaires").upsert({
     id: questionnaire.id,
     title: questionnaire.title,
     version: questionnaire.version,
     source_file: questionnaire.sourceFile,
   });
+
+  if (questionnaireError) {
+    logSupabaseError("questionnaires upsert", questionnaireError);
+    throw new Error("questionnaire_catalog_failed");
+  }
 
   const sections = questionnaire.sections.map((section, index) => ({
     id: section.key,
@@ -27,7 +36,12 @@ async function ensureQuestionnaireCatalog() {
   }));
 
   if (sections.length > 0) {
-    await supabase.from("questionnaire_sections").upsert(sections);
+    const { error } = await supabase.from("questionnaire_sections").upsert(sections);
+
+    if (error) {
+      logSupabaseError("questionnaire_sections upsert", error);
+      throw new Error("questionnaire_catalog_failed");
+    }
   }
 
   const questions = questionnaire.sections.flatMap((section) =>
@@ -48,7 +62,12 @@ async function ensureQuestionnaireCatalog() {
   );
 
   if (questions.length > 0) {
-    await supabase.from("questions").upsert(questions);
+    const { error } = await supabase.from("questions").upsert(questions);
+
+    if (error) {
+      logSupabaseError("questions upsert", error);
+      throw new Error("questionnaire_catalog_failed");
+    }
   }
 
   return supabase;
@@ -82,7 +101,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: errors.join(" ") }, { status: 400 });
   }
 
-  const supabase = await ensureQuestionnaireCatalog();
+  let supabase;
+
+  try {
+    supabase = await ensureQuestionnaireCatalog();
+  } catch {
+    return NextResponse.json({ error: "Não foi possível preparar o catálogo do questionário." }, { status: 500 });
+  }
+
   const userAgent = request.headers.get("user-agent");
 
   const { data: submission, error: submissionError } = await supabase
@@ -101,6 +127,7 @@ export async function POST(request: Request) {
     .single();
 
   if (submissionError || !submission) {
+    logSupabaseError("submissions insert", submissionError);
     return NextResponse.json({ error: "Não foi possível registrar a submissão." }, { status: 500 });
   }
 
@@ -125,6 +152,7 @@ export async function POST(request: Request) {
     const { error } = await supabase.from("answers").insert(answers);
 
     if (error) {
+      logSupabaseError("answers insert", error);
       return NextResponse.json({ error: "Não foi possível registrar as respostas." }, { status: 500 });
     }
   }
@@ -144,7 +172,12 @@ export async function POST(request: Request) {
     });
 
   if (referrals.length > 0) {
-    await supabase.from("referrals").insert(referrals);
+    const { error } = await supabase.from("referrals").insert(referrals);
+
+    if (error) {
+      logSupabaseError("referrals insert", error);
+      return NextResponse.json({ error: "Não foi possível registrar os encaminhamentos." }, { status: 500 });
+    }
   }
 
   const classifications = Object.entries(cleanAnswers)
@@ -161,7 +194,12 @@ export async function POST(request: Request) {
     });
 
   if (classifications.length > 0) {
-    await supabase.from("institutional_classifications").insert(classifications);
+    const { error } = await supabase.from("institutional_classifications").insert(classifications);
+
+    if (error) {
+      logSupabaseError("institutional_classifications insert", error);
+      return NextResponse.json({ error: "Não foi possível registrar as classificações institucionais." }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ submissionId: submission.id }, { status: 201 });
